@@ -1679,21 +1679,16 @@ def make_proxy_url(raw_url):
 from bs4 import BeautifulSoup
 
 # ==============================================================================
-# MYEDIT ONLINE ALTYAPI VE KRIPTOGRAFİK YARDIMCILAR (Poofy Email)
+# MYEDIT ONLINE ALTYAPI VE KRIPTOGRAFİK YARDIMCILAR (tempo.mintraccoon.com)
 # ==============================================================================
 
 # İSTEDİĞİN DOMAİNLERİ BURAYA GİREBİLİRSİN
 # CyberLink ile stabil çalıştığı test edilen domainler listenin başındadır.
 WHITELIST_DOMAINS = [
-    "fansubupdate.com",
+    "zzzzig.com",
 ]
 
-POLL_COMPONENTS = [
-    "frontend.components.action",
-    "frontend.components.token-login",
-    "frontend.components.check-mail",
-    "frontend.components.inbox-message",
-]
+POLL_COMPONENTS = []
 
 
 def generate_random_name(length: int = 10) -> str:
@@ -1737,320 +1732,223 @@ def apply_temp_mail_proxy(session: requests.Session):
 PROXY_MODE = TEMP_MAIL_PROXY_MODE
 PROXY_CONFIG = TEMP_MAIL_PROXY_CONFIG
 
-class TempMailClient:
-    """Poofy Email (poofy.email) API İstemcisi"""
 
-    BASE_URL = "https://poofy.email"
+class TempMailClient:
+    """tempo.mintraccoon.com Entegrasyonu"""
+
+    BASE_URL = "https://tempo.mintraccoon.com/api"
 
     def __init__(
         self,
-        domain: Optional[str] = None,
-        api_key: Optional[str] = None,
+        domain: str = None,
+        api_key: str = None,
         proxy_mode: int = PROXY_MODE,
-        proxy_config: Optional[dict] = None,
+        proxy_config: dict = None,
     ):
-        self.domain = domain
-        self.api_key = api_key or os.environ.get("POOFY_API_KEY")
-        self.inbox_id = None
-        self.address = None
-        self.email = None
-        self.box = None
-        self.password = None
-        self._seen_ids = set()
+        if domain:
+            self.domain = domain
+        elif WHITELIST_DOMAINS:
+            self.domain = WHITELIST_DOMAINS[0]
+        else:
+            self.domain = "zzzzig.com"
 
+        self.box = None
+        self.email = None
+        self.address = None
+        self.token = None
         self.session = requests.Session()
         self.session.headers.update({
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0.0.0 Safari/537.36"
-            ),
-            "Accept": "application/json",
-            "Accept-Encoding": "gzip, deflate",
-            "Origin": self.BASE_URL,
-            "Referer": f"{self.BASE_URL}/",
+            "accept": "*/*",
+            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         })
+        apply_temp_mail_proxy(self.session)
+        self._seen_ids = set()
 
-        if self.api_key:
-            self.session.headers["Authorization"] = f"Bearer {self.api_key}"
+    def get_available_domains(self) -> list:
+        return ["zzzzig.com"]
 
-        # Proxy Yapılandırması (Dosyadaki mevcut proxy ayarlarıyla tam uyumlu)
-        if proxy_config is not None:
-            if proxy_mode == 1 and proxy_config:
-                self.session.proxies.update(proxy_config)
-        else:
-            apply_temp_mail_proxy(self.session)
+    def get_email(
+        self,
+        local_part=None,
+        domain: str = None,
+        length: int = None,
+    ) -> str:
+        """Yeni bir geçici e-posta adresi üretir ve tempo.mintraccoon.com oturumuna bağlar."""
+        if domain:
+            self.domain = domain
+        elif not self.domain and WHITELIST_DOMAINS:
+            self.domain = WHITELIST_DOMAINS[0]
 
-    def get_available_domains(self) -> List[str]:
-        """Serviste o an aktif olan domain listesini çeker."""
-        try:
-            endpoint = f"{self.BASE_URL}/api/v1/domains" if self.api_key else f"{self.BASE_URL}/api/domains"
-            resp = self.session.get(endpoint, timeout=10)
-            if resp.ok:
-                data = resp.json()
-                domains = data.get("domains", [])
-                if isinstance(domains, list) and domains:
-                    return domains
-        except Exception as e:
-            print(f"[Poofy] Domain sorgu uyarısı: {e}")
+        target = self.domain or "zzzzig.com"
+        if not target.startswith("@"):
+            target = "@" + target
 
-        return WHITELIST_DOMAINS
+        while True:
+            try:
+                resp = self.session.post(f"{self.BASE_URL}/email?force=true", timeout=15)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    email = data.get("email", "")
+                    if email.endswith(target):
+                        self.email = email
+                        self.address = email
+                        self.token = data.get("token", "")
+                        print(f"[Temp Mail] Olusturuldu: {self.email}")
+                        return self.email
+                time.sleep(0.5)
+            except Exception as e:
+                print(f"[Temp Mail] get_email uyarisi: {e}")
+                time.sleep(1)
 
-    def get_email(self, local_part: Optional[Union[str, int]] = None, domain: Optional[str] = None, length: Optional[int] = None) -> str:
-        """Yeni bir geçici e-posta kutusu oluşturur ve adresini döner.
-        
-        Args:
-            local_part: İsteğe bağlı e-posta ön eki veya uzunluk (int girilirse).
-            domain: İsteğe bağlı domain.
-            length: Rastgele isim uzunluğu.
-            
-        Returns:
-            Oluşturulan e-posta adresi (örnek: u_k9d2f4a1@fansubupdate.com)
-        """
-        if isinstance(local_part, int):
-            length = local_part
-            local_part = None
+    def get_messages(self) -> list:
+        headers = {"x-email-token": self.token}
+        res = self.session.get(f"{self.BASE_URL}/inbox/{self.email}", headers=headers, timeout=15)
+        if res.status_code == 200:
+            return res.json().get("messages", [])
+        return []
 
-        active_domains = self.get_available_domains()
-        
-        # Domain seçimi: Verilen -> Whitelist ile eşleşen ilk aktif -> Aktiflerin ilki
-        selected_domain = domain or self.domain
-        if not selected_domain:
-            for d in WHITELIST_DOMAINS:
-                if d in active_domains:
-                    selected_domain = d
-                    break
-        if not selected_domain:
-            selected_domain = active_domains[0] if active_domains else "fansubupdate.com"
-
-        name = local_part or generate_random_name(length or 8)
-
-        # 1. API Key varsa v1 endpoint'i kullan
-        if self.api_key:
-            payload = {
-                "name": name,
-                "domain": selected_domain,
-                "ttl_minutes": 60,
-            }
-            resp = self.session.post(f"{self.BASE_URL}/api/v1/inboxes", json=payload, timeout=15)
-            resp.raise_for_status()
-            data = resp.json()
-            self.inbox_id = data.get("id")
-            self.address = data.get("address")
-            self.password = data.get("password")
-        else:
-            # 2. Public Web API endpoint'i
-            payload = {
-                "localPart": name,
-                "domain": selected_domain,
-                "style": "name",
-            }
-            resp = self.session.post(f"{self.BASE_URL}/api/inboxes", json=payload, timeout=15)
-            resp.raise_for_status()
-            data = resp.json()
-            mailbox = data.get("mailbox", {})
-            self.inbox_id = mailbox.get("id")
-            self.address = mailbox.get("address")
-            self.password = data.get("password")
-
-        self.domain = selected_domain
-        self.email = self.address
-        self.box = name
-        self._seen_ids.clear()
-        print(f"[Poofy] E-posta oluşturuldu: {self.address} (ID: {self.inbox_id})")
-        return self.address
-
-    def get_messages(self) -> List[Dict[str, Any]]:
-        """Gelen kutusundaki e-posta listesini çeker."""
-        if not self.inbox_id:
-            raise ValueError("[Poofy] Önce get_email() çağrılarak bir posta kutusu oluşturulmalıdır!")
-
-        if self.api_key:
-            resp = self.session.get(f"{self.BASE_URL}/api/v1/inboxes/{self.inbox_id}/messages", timeout=15)
-            resp.raise_for_status()
-            return resp.json().get("messages", [])
-        else:
-            resp = self.session.get(f"{self.BASE_URL}/api/messages?mailbox={self.inbox_id}", timeout=15)
-            resp.raise_for_status()
-            return resp.json().get("messages", [])
-
-    def get_message_detail(self, message_id: str) -> Dict[str, Any]:
-        """Belirtilen mesajın detaylarını (özne, link, text, html vb.) çeker."""
-        try:
-            endpoint = f"{self.BASE_URL}/api/v1/messages/{message_id}" if self.api_key else f"{self.BASE_URL}/api/messages/{message_id}"
-            resp = self.session.get(endpoint, timeout=15)
-            if resp.ok:
-                data = resp.json()
-                return data.get("message", data)
-        except Exception:
-            pass
-
-        # Detay endpoint'i yoksa mesaj listesinden ilgili mesajı bul
-        for msg in self.get_messages():
-            if str(msg.get("id")) == str(message_id):
-                return msg
-
+    def get_message_detail(self, message_id: str) -> dict:
+        headers = {"x-email-token": self.token}
+        res = self.session.get(f"{self.BASE_URL}/message/{self.email}/{message_id}", headers=headers, timeout=15)
+        if res.status_code == 200:
+            return res.json()
         return {}
 
-    def _extract_activation_link(self, text: str) -> Optional[str]:
-        """E-posta içeriğinden aktivasyon / doğrulama linkini ayıklar."""
+    def _extract_activation_link(self, text: str) -> str:
         if not text:
             return None
 
-        # 1. CyberLink özel trace linki (en yüksek öncelik)
-        trace_links = re.findall(
-            r'https?://membership\.cyberlink\.com/prog/event/autoedm/trace_mem\.jsp\?[^\s"\'<>]+',
-            text,
-        )
+        # 1. CyberLink trace_mem linki
+        pattern_trace = r'https?://membership\.cyberlink\.com/prog/event/autoedm/trace_mem\.jsp\?[^\s"\'<>]+'
+        trace_links = re.findall(pattern_trace, text)
         for link in trace_links:
-            clean = link.replace("&amp;", "&").rstrip("\"'.,")
-            if any(k in clean for k in ["account-activate", "Activate", "active-member"]):
-                return clean
+            link = link.replace("&amp;", "&").rstrip("\"'")
+            if any(k in link for k in ["account-activate", "Activate", "active-member"]):
+                return link
 
-        # 2. Genel activate / verify / confirm / token / signup linkleri
-        general_links = re.findall(
-            r'https?://[^\s"\'<>]+(?:activate|confirm|verify|token|signup)[^\s"\'<>]*',
-            text,
-            re.IGNORECASE,
-        )
-        for link in general_links:
-            clean = link.replace("&amp;", "&").rstrip("\"'.,")
-            if not any(ign in clean for ign in ["poofy.email", "w3.org", "schema.org"]):
-                return clean
+        # 2. Direkt account-activate veya traceLink baglantisi
+        match = re.search(r'href=["\']([^"\']*(?:account-activate|traceLink=[^"\']*))["\']', text)
+        if match:
+            return match.group(1).replace("&amp;", "&").rstrip("\"'")
+
+        # 3. Genel linkler
+        pattern_gen = r'https?://[^\s"\'<>]+'
+        for link in re.findall(pattern_gen, text):
+            link = link.replace("&amp;", "&").rstrip("\"'")
+            if any(k in link for k in ["account-activate", "activate", "confirm", "verify"]):
+                return link
 
         if trace_links:
-            return trace_links[0].replace("&amp;", "&").rstrip("\"'.,")
-
-        # 3. Genel bağlantı (poofy harici)
-        links = re.findall(r'https?://[^\s"\'<>]+', text)
-        for link in links:
-            cleaned = link.replace("&amp;", "&").rstrip("\"'.,")
-            if not any(ign in cleaned for ign in ["poofy.email", "w3.org", "schema.org"]):
-                return cleaned
+            return trace_links[0].replace("&amp;", "&").rstrip("\"'")
 
         return None
 
-    def _extract_code(self, text: str, detail_code: Optional[str] = None) -> Optional[str]:
-        """E-posta detayından veya metninden OTP/onay kodunu ayıklar."""
-        if detail_code:
-            return str(detail_code).strip()
-
+    def _extract_code(self, text: str, detail_code: str = None) -> str:
         if not text:
             return None
-
+        # 1. Auth token
+        auth_match = re.search(r"auth(?:%3D|=)([a-f0-9]{32,64})", text, re.I)
+        if auth_match:
+            return auth_match.group(1)
+        # 2. Sayisal OTP kodu
+        otp_match = re.search(r"\b(\d{6})\b", text)
+        if otp_match:
+            return otp_match.group(1)
+        # 3. Genel 4-8 haneli kod
         codes = re.findall(r"\b\d{4,8}\b", text)
         return codes[0] if codes else None
 
-    def wait_for_message(self, timeout: int = 60, interval: int = 3) -> Dict[str, Any]:
-        """Gelen kutusuna yeni bir e-posta düşene kadar bekler."""
-        print(f"[Poofy] Gelen kutusu bekleniyor ({self.address})...")
+    def wait_for_message(self, timeout: int = 60, interval: int = 3) -> dict:
+        print(f"[Temp Mail] Gelen kutusu sorgulaniyor ({self.email})...")
         deadline = time.time() + timeout
+        headers = {"x-email-token": self.token}
 
         while time.time() < deadline:
             try:
-                messages = self.get_messages()
-                for msg in messages:
-                    msg_id = str(msg.get("id"))
-                    if msg_id not in self._seen_ids:
-                        self._seen_ids.add(msg_id)
-                        print(f"[+] Yeni e-posta alındı! ID: {msg_id} - Konu: {msg.get('subject', 'Konusuz')}")
-                        detail = self.get_message_detail(msg_id) or msg
-                        return detail
+                res = self.session.get(f"{self.BASE_URL}/inbox/{self.email}", headers=headers, timeout=15)
+                if res.status_code == 200:
+                    messages = res.json().get("messages", [])
+                    for msg in messages:
+                        msg_id = msg.get("id")
+                        if msg_id and msg_id not in self._seen_ids:
+                            self._seen_ids.add(msg_id)
+                            detail = self.get_message_detail(msg_id)
+                            return detail or msg
             except Exception as e:
-                print(f"[Poofy] Mesaj sorgu uyarısı: {e}")
-
+                print(f"[Temp Mail] Poll uyarisi: {e}")
             time.sleep(interval)
-
-        raise TimeoutError(f"[Poofy] {timeout} saniye içinde yeni e-posta gelmedi!")
+        raise TimeoutError("Mesaj gelmedi!")
 
     def wait_for_activation_link(self, timeout: int = 60, interval: int = 3) -> str:
-        """Gelen e-postadaki onay/aktivasyon linkini bekler ve döner."""
-        print(f"[Poofy] Aktivasyon linki bekleniyor ({self.address})...")
+        print(f"[Temp Mail] Gelen kutusu sorgulaniyor ({self.email})...")
         deadline = time.time() + timeout
+        headers = {"x-email-token": self.token}
 
         while time.time() < deadline:
             try:
-                messages = self.get_messages()
-                for msg in messages:
-                    msg_id = str(msg.get("id"))
-                    if msg_id not in self._seen_ids:
-                        self._seen_ids.add(msg_id)
-                        print(f"[+] Yeni e-posta geldi! ID: {msg_id}")
-                        detail = self.get_message_detail(msg_id) or msg
-
-                        # 1. API doğrudan link sağladı mı? (verify_link, link, verification_link)
-                        api_link = (
-                            detail.get("verify_link")
-                            or detail.get("link")
-                            or detail.get("verification_link")
-                            or msg.get("verify_link")
-                            or msg.get("link")
-                        )
-                        if api_link:
-                            print(f"[✓] Poofy API linki yakaladı: {api_link}")
-                            return api_link
-
-                        content = (
-                            (detail.get("html") or detail.get("html_body") or "")
-                            + "\n"
-                            + (detail.get("text") or detail.get("text_body") or "")
-                            + "\n"
-                            + (detail.get("snippet") or "")
-                        )
-                        link = self._extract_activation_link(content)
-                        if link:
-                            print(f"[✓] Aktivasyon linki bulundu: {link}")
-                            return link
+                res = self.session.get(f"{self.BASE_URL}/inbox/{self.email}", headers=headers, timeout=15)
+                if res.status_code == 200:
+                    messages = res.json().get("messages", [])
+                    for msg in messages:
+                        msg_id = msg.get("id")
+                        if msg_id and msg_id not in self._seen_ids:
+                            self._seen_ids.add(msg_id)
+                            print(f"[+] Yeni mail alindi! ID: {msg_id}")
+                            msg_res = self.session.get(
+                                f"{self.BASE_URL}/message/{self.email}/{msg_id}",
+                                headers=headers,
+                                timeout=15,
+                            )
+                            if msg_res.status_code == 200:
+                                data = msg_res.json()
+                                content = (data.get("body_html") or "") + "\n" + (data.get("body_text") or "")
+                                link = self._extract_activation_link(content)
+                                if link:
+                                    print(f"  -> Aktivasyon linki bulundu: {link[:80]}...")
+                                    return link
             except Exception as e:
-                print(f"[Poofy] Mesaj sorgu uyarısı: {e}")
+                print(f"[Temp Mail] Poll uyarisi: {e}")
 
             time.sleep(interval)
 
-        raise TimeoutError(f"[Poofy] {timeout} saniye içinde aktivasyon linki gelmedi!")
+        raise TimeoutError("Aktivasyon maili gelmedi!")
 
     def wait_for_code(self, timeout: int = 60, interval: int = 3) -> str:
-        """Gelen e-postadaki OTP / doğrulama kodunu bekler ve döner."""
-        print(f"[Poofy] Doğrulama kodu bekleniyor ({self.address})...")
+        print(f"[Temp Mail] Kod bekleniyor ({self.email})...")
         deadline = time.time() + timeout
+        headers = {"x-email-token": self.token}
 
         while time.time() < deadline:
             try:
-                messages = self.get_messages()
-                for msg in messages:
-                    msg_id = str(msg.get("id"))
-                    if msg_id not in self._seen_ids:
-                        self._seen_ids.add(msg_id)
-                        print(f"[+] Yeni e-posta geldi! ID: {msg_id}")
-                        detail = self.get_message_detail(msg_id) or msg
-
-                        # 1. API doğrudan OTP/kod sağladı mı? (otp_code, code)
-                        code = (
-                            detail.get("otp_code")
-                            or detail.get("code")
-                            or msg.get("otp_code")
-                            or msg.get("code")
-                        )
-                        if code:
-                            print(f"[✓] Poofy API kodu yakaladı: {code}")
-                            return str(code)
-
-                        content = (
-                            (detail.get("html") or detail.get("html_body") or "")
-                            + "\n"
-                            + (detail.get("text") or detail.get("text_body") or "")
-                        )
-                        found_code = self._extract_code(content)
-                        if found_code:
-                            print(f"[✓] Doğrulama kodu bulundu: {found_code}")
-                            return found_code
+                res = self.session.get(f"{self.BASE_URL}/inbox/{self.email}", headers=headers, timeout=15)
+                if res.status_code == 200:
+                    messages = res.json().get("messages", [])
+                    for msg in messages:
+                        msg_id = msg.get("id")
+                        if msg_id and msg_id not in self._seen_ids:
+                            self._seen_ids.add(msg_id)
+                            print(f"[+] Yeni mail alindi! ID: {msg_id}")
+                            msg_res = self.session.get(
+                                f"{self.BASE_URL}/message/{self.email}/{msg_id}",
+                                headers=headers,
+                                timeout=15,
+                            )
+                            if msg_res.status_code == 200:
+                                data = msg_res.json()
+                                content = (data.get("body_html") or "") + "\n" + (data.get("body_text") or "")
+                                code = self._extract_code(content)
+                                if code:
+                                    print(f"[+] Dogrulama kodu bulundu: {code}")
+                                    return code
             except Exception as e:
-                print(f"[Poofy] Mesaj sorgu uyarısı: {e}")
+                print(f"[Temp Mail] Poll uyarisi: {e}")
 
             time.sleep(interval)
 
-        raise TimeoutError(f"[Poofy] {timeout} saniye içinde doğrulama kodu gelmedi!")
+        raise TimeoutError("Dogrulama kodu gelmedi!")
 
-# Geriye dönük uyumluluk ve alternatif kullanım için alias:
+
+# Geriye donuk uyumluluk ve alternatif kullanim icin alias:
 PoofyMailClient = TempMailClient
 
 
